@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Secure File Drop Box</title>
+    <style>
+        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f2f5; margin: 0; }
+        .upload-container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 400px; text-align: center; }
+        .input-group { margin-bottom: 15px; text-align: left; }
+        .input-group label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 14px; }
+        .input-group input { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+        .drop-zone { border: 2px dashed #007bff; padding: 40px 20px; border-radius: 6px; cursor: pointer; margin-bottom: 20px; color: #555; background: #fafafa; }
+        .progress-bar { width: 100%; background: #eee; border-radius: 4px; height: 10px; display: none; overflow: hidden; }
+        .progress-fill { height: 100%; background: #007bff; width: 0%; transition: width 0.2s; }
+        #status { margin-top: 15px; font-size: 14px; font-weight: bold; word-break: break-all; }
+    </style>
+</head>
+<body>
+
+<div class="upload-container">
+    <h2>Secure Upload Portal</h2>
+    
+    <div class="input-group">
+        <label for="uploadKey">Security Access Key:</label>
+        <input type="password" id="uploadKey" placeholder="Enter secret upload password">
+    </div>
+
+    <div class="drop-zone" id="dropZone">Drag & Drop file here or Click to select</div>
+    <input type="file" id="fileInput" style="display: none;">
+    <div class="progress-bar" id="progressBar"><div class="progress-fill" id="progressFill"></div></div>
+    <div id="status">Awaiting Access Key...</div>
+</div>
+
+<script>
+    // Paste your deployed Google Apps Script Web App URL here
+    const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwq_h9-eMPdlWgpQpxeYguys5ePKVnat3Sx2QfOTsbo53Rq4FwU8amIu-pqEZRgsIU/exec"; 
+
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const progressBar = document.getElementById('progressBar');
+    const progressFill = document.getElementById('progressFill');
+    const statusDiv = document.getElementById('status');
+    const uploadKeyInput = document.getElementById('uploadKey');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => handleUpload(e.target.files[0]));
+    
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.style.background = '#e9ecef'; });
+    dropZone.addEventListener('dragleave', () => { dropZone.style.background = '#fafafa'; });
+    dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.style.background = '#fafafa'; handleUpload(e.dataTransfer.files[0]); });
+
+    async function handleUpload(file) {
+        if (!file) return;
+        
+        const secretKey = uploadKeyInput.value.trim();
+        if (!secretKey) {
+            statusDiv.innerText = "❌ Error: Please enter the Security Access Key first.";
+            return;
+        }
+
+        statusDiv.innerText = "Authenticating with secure storage...";
+        statusDiv.style.color = "#333";
+        progressBar.style.display = 'block';
+        progressFill.style.width = '0%';
+        progressFill.style.background = '#007bff';
+
+        try {
+            // Step 1: Send the key + metadata to Apps Script to initialize the upload session
+            const initResponse = await fetch(WEB_APP_URL, {
+                method: "POST",
+                body: JSON.stringify({ 
+                    filename: file.name, 
+                    mimeType: file.type || "application/octet-stream",
+                    key: secretKey
+                })
+            });
+            
+            const sessionData = await initResponse.json();
+            
+            if (sessionData.error) {
+                throw new Error(sessionData.error);
+            }
+
+            const uploadUrl = sessionData.uploadUrl;
+            const chunkSize = 5 * 1024 * 1024; // 5MB transmission slices
+            let start = 0;
+
+            statusDiv.innerText = "Connection verified. Streaming data chunks directly to Google...";
+
+            // Step 2: Stream the chunks directly to Google Drive
+            while (start < file.size) {
+                const end = Math.min(start + chunkSize, file.size);
+                const chunk = file.slice(start, end);
+
+                const response = await fetch(uploadUrl, {
+                    method: "PUT",
+                    headers: {
+                        "Content-Range": `bytes ${start}-${end - 1}/${file.size}`
+                    },
+                    body: chunk
+                });
+
+                if (response.status !== 308 && response.status !== 200 && response.status !== 201) {
+                    throw new Error("Google Drive rejected data block stream.");
+                }
+
+                start = end;
+                const percent = Math.round((start / file.size) * 100);
+                progressFill.style.width = `${percent}%`;
+            }
+
+            statusDiv.innerText = "🎉 Success: File safely archived. Remote access closed.";
+            statusDiv.style.color = "green";
+            fileInput.value = "";
+        } catch (err) {
+            statusDiv.innerText = `❌ ${err.message}`;
+            statusDiv.style.color = "red";
+            progressFill.style.background = 'red';
+        }
+    }
+</script>
+</body>
+</html>
